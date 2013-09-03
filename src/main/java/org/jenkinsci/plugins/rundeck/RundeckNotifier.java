@@ -21,11 +21,14 @@ import hudson.tasks.BuildStepMonitor;
 import hudson.tasks.Notifier;
 import hudson.tasks.Publisher;
 import hudson.util.FormValidation;
+
 import java.io.IOException;
 import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
 import net.sf.json.JSONObject;
+
 import org.apache.commons.lang.StringUtils;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.QueryParameter;
@@ -36,6 +39,8 @@ import org.rundeck.api.RundeckClient;
 import org.rundeck.api.domain.RundeckExecution;
 import org.rundeck.api.domain.RundeckExecution.ExecutionStatus;
 import org.rundeck.api.domain.RundeckJob;
+import org.rundeck.api.domain.RundeckLogEntry;
+import org.rundeck.api.domain.RundeckLogSegment;
 
 /**
  * Jenkins {@link Notifier} that runs a job on RunDeck (via the {@link RundeckClient})
@@ -61,16 +66,19 @@ public class RundeckNotifier extends Notifier {
     private final Boolean shouldWaitForRundeckJob;
 
     private final Boolean shouldFailTheBuild;
+    
+    private final Boolean doNotTailLogging;
 
     @DataBoundConstructor
     public RundeckNotifier(String jobId, String options, String nodeFilters, String tag,
-            Boolean shouldWaitForRundeckJob, Boolean shouldFailTheBuild) {
+            Boolean shouldWaitForRundeckJob, Boolean shouldFailTheBuild, Boolean doNotTailLogging) {
         this.jobId = jobId;
         this.options = options;
         this.nodeFilters = nodeFilters;
         this.tag = tag;
         this.shouldWaitForRundeckJob = shouldWaitForRundeckJob;
         this.shouldFailTheBuild = shouldFailTheBuild;
+        this.doNotTailLogging = doNotTailLogging;
     }
 
     @Override
@@ -168,15 +176,30 @@ public class RundeckNotifier extends Notifier {
 
             if (Boolean.TRUE.equals(shouldWaitForRundeckJob)) {
                 listener.getLogger().println("Waiting for RunDeck execution to finish...");
+                
+                if(Boolean.TRUE.equals(doNotTailLogging)) {
+                  listener.getLogger().println("(RunDeck execution output will not be tailed)");
+                } else {
+                  listener.getLogger().println("--------- RunDeck execution output: start ---------");
+                }
+                
+                RundeckTailResult tailResult = new RundeckTailResult(0L, "");
                 while (ExecutionStatus.RUNNING.equals(execution.getStatus())) {
                     try {
                         Thread.sleep(5000);
+                        tailResult = tailJobLog(rundeck, listener, execution.getId(), tailResult);
                     } catch (InterruptedException e) {
                         listener.getLogger().println("Oops, interrupted ! " + e.getMessage());
                         break;
                     }
                     execution = rundeck.getExecution(execution.getId());
                 }
+                tailJobLog(rundeck, listener, execution.getId(), tailResult);
+                
+                if(Boolean.FALSE.equals(doNotTailLogging)) {
+                  listener.getLogger().println("--------- RunDeck execution output: end ---------");
+                }
+                
                 listener.getLogger().println("RunDeck execution #" + execution.getId() + " finished in "
                                              + execution.getDuration() + ", with status : " + execution.getStatus());
 
@@ -203,6 +226,39 @@ public class RundeckNotifier extends Notifier {
             listener.getLogger().println("Configuration error : " + e.getMessage());
             return false;
         }
+    }
+
+    private RundeckTailResult tailJobLog(RundeckClient rundeck, BuildListener listener, long executionId, RundeckTailResult tailResult) {
+      // If we're not tailing, return immediately
+      if(Boolean.TRUE.equals(doNotTailLogging)) {
+        return tailResult;
+      }
+      
+      RundeckLogSegment tail = null;
+      try {
+        tail = rundeck.getLogTail(executionId, tailResult.getLastOffset());
+      } catch(RundeckApiException e) {
+        listener.error("ERROR: could not tail Rundeck execution log! ", e);
+        return tailResult;
+      }
+      
+      // If the last entry timestamp is still the same, nothing happened, so don't output anything
+      if(tailResult.getLastOffset()  == tail.getOffset()) {
+        return tailResult;
+      }
+      
+      String lastCommand = tailResult.getLastCommand();
+      for(RundeckLogEntry e : tail.getEntries()) {
+        // No need to worry about null in lastCommand because the API uses StringUtils.trimToEmpty for the command String
+        if (!e.getCommand().equals(lastCommand)) {
+          listener.getLogger().println(String.format(">>>> %s <<<<", e.getCommand()));
+          lastCommand = e.getCommand();
+        }
+        
+        listener.getLogger().println(new StringBuilder(e.getTime()).append(' ').append(e.getEntryText()));
+      }
+      
+      return new RundeckTailResult(tail.getOffset(), lastCommand);
     }
 
     /**
@@ -304,6 +360,10 @@ public class RundeckNotifier extends Notifier {
     public Boolean getShouldFailTheBuild() {
         return shouldFailTheBuild;
     }
+    
+    public Boolean getDoNotTailLogging() {
+      return doNotTailLogging;
+    }
 
     @Override
     public RundeckDescriptor getDescriptor() {
@@ -353,7 +413,8 @@ public class RundeckNotifier extends Notifier {
                                        formData.getString("nodeFilters"),
                                        formData.getString("tag"),
                                        formData.getBoolean("shouldWaitForRundeckJob"),
-                                       formData.getBoolean("shouldFailTheBuild"));
+                                       formData.getBoolean("shouldFailTheBuild"),
+                                       formData.getBoolean("doNotTailLogging"));
         }
 
         public FormValidation doTestConnection(@QueryParameter("rundeck.url") final String url,
@@ -467,5 +528,22 @@ public class RundeckNotifier extends Notifier {
         }
 
     }
-
+    
+    private static class RundeckTailResult {
+        private final long lastOffset;
+        private final String lastCommand;
+  
+        public RundeckTailResult(long lastOffset, String lastCommand) {
+          this.lastOffset = lastOffset;
+          this.lastCommand = lastCommand;
+        }
+  
+        public long getLastOffset() {
+          return lastOffset;
+        }
+  
+        public String getLastCommand() {
+          return lastCommand;
+        }
+    }
 }
