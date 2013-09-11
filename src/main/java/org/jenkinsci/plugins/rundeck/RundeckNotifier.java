@@ -183,8 +183,8 @@ public class RundeckNotifier extends Notifier {
                   listener.getLogger().println("--------- RunDeck execution output: start ---------");
                 }
                 
-                RundeckTailResult tailResult = new RundeckTailResult(0L, "");
-                while (ExecutionStatus.RUNNING.equals(execution.getStatus())) {
+                RundeckTailResult tailResult = new RundeckTailResult(0L, "", false);
+                while (ExecutionStatus.RUNNING.equals(execution.getStatus()) || !tailResult.isComplete()) {
                     try {
                         Thread.sleep(5000);
                         tailResult = tailJobLog(rundeck, listener, execution.getId(), tailResult);
@@ -194,7 +194,6 @@ public class RundeckNotifier extends Notifier {
                     }
                     execution = rundeck.getExecution(execution.getId());
                 }
-                tailJobLog(rundeck, listener, execution.getId(), tailResult);
                 
                 if(Boolean.FALSE.equals(doNotTailLogging)) {
                   listener.getLogger().println("--------- RunDeck execution output: end ---------");
@@ -257,8 +256,8 @@ public class RundeckNotifier extends Notifier {
         
         listener.getLogger().println(new StringBuilder(e.getTime()).append(' ').append(e.getEntryText()));
       }
-      
-      return new RundeckTailResult(tail.getOffset(), lastCommand);
+
+      return new RundeckTailResult(tail.getOffset(), lastCommand, tail.isCompleted() && tail.isExecCompleted());
     }
 
     /**
@@ -532,10 +531,12 @@ public class RundeckNotifier extends Notifier {
     private static class RundeckTailResult {
         private final long lastOffset;
         private final String lastCommand;
+        private final boolean complete;
   
-        public RundeckTailResult(long lastOffset, String lastCommand) {
+        public RundeckTailResult(long lastOffset, String lastCommand, boolean complete) {
           this.lastOffset = lastOffset;
           this.lastCommand = lastCommand;
+          this.complete = complete;
         }
   
         public long getLastOffset() {
@@ -544,6 +545,10 @@ public class RundeckNotifier extends Notifier {
   
         public String getLastCommand() {
           return lastCommand;
+        }
+        
+        public boolean isComplete() {
+          return complete;
         }
     }
 }
