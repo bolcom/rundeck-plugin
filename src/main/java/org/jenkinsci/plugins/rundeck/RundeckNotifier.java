@@ -183,7 +183,7 @@ public class RundeckNotifier extends Notifier {
                   listener.getLogger().println("--------- RunDeck execution output: start ---------");
                 }
                 
-                RundeckTailResult tailResult = new RundeckTailResult(0L, "", false);
+                RundeckTailResult tailResult = new RundeckTailResult(0L, "", doNotTailLogging); // if we don't tail the logging, the logging is already complete
                 while (ExecutionStatus.RUNNING.equals(execution.getStatus()) || !tailResult.isComplete()) {
                     try {
                         Thread.sleep(5000);
@@ -238,23 +238,24 @@ public class RundeckNotifier extends Notifier {
         tail = rundeck.getLogTail(executionId, tailResult.getLastOffset());
       } catch(RundeckApiException e) {
         listener.error("ERROR: could not tail Rundeck execution log! ", e);
-        return tailResult;
+        // There was an error getting the logs, so assume we've gotten them all, otherwise we risk an infinite loop from the while loop in the calling method
+        return new RundeckTailResult(tailResult.getLastOffset(), tailResult.getLastCommand(), true);
       }
       
-      // If the last entry timestamp is still the same, nothing happened, so don't output anything
-      if(tailResult.getLastOffset()  == tail.getOffset()) {
-        return tailResult;
-      }
       
       String lastCommand = tailResult.getLastCommand();
-      for(RundeckLogEntry e : tail.getEntries()) {
-        // No need to worry about null in lastCommand because the API uses StringUtils.trimToEmpty for the command String
-        if (!e.getCommand().equals(lastCommand)) {
-          listener.getLogger().println(String.format(">>>> %s <<<<", e.getCommand()));
-          lastCommand = e.getCommand();
+
+      // If there is something to output, do it
+      if (tailResult.getLastOffset() != tail.getOffset()) {
+        for (RundeckLogEntry e : tail.getEntries()) {
+          // No need to worry about null in lastCommand because the API uses StringUtils.trimToEmpty for the command String
+          if (!e.getCommand().equals(lastCommand)) {
+            listener.getLogger().println(String.format(">>>> %s <<<<", e.getCommand()));
+            lastCommand = e.getCommand();
+          }
+  
+          listener.getLogger().println(new StringBuilder(e.getTime()).append(' ').append(e.getEntryText()));
         }
-        
-        listener.getLogger().println(new StringBuilder(e.getTime()).append(' ').append(e.getEntryText()));
       }
 
       return new RundeckTailResult(tail.getOffset(), lastCommand, tail.isCompleted() && tail.isExecCompleted());
