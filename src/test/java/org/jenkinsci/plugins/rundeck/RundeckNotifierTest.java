@@ -305,6 +305,22 @@ public class RundeckNotifierTest extends HudsonTestCase {
       assertTrue(s.contains("(RunDeck execution output will not be tailed)"));
       assertTrue(s.contains("RunDeck execution #1 finished in 3 minutes 27 seconds, with status : SUCCEEDED"));
     }
+    
+    public void testLackOfNPEsInLogTailing() throws Exception {
+      RundeckNotifier notifier = new RundeckNotifier("1", createOptions(), null, "", true, false, null);
+      notifier.getDescriptor().setRundeckInstance(new MockRundeckClient());
+  
+      FreeStyleProject project = createFreeStyleProject();
+      project.getBuildersList().add(new MockBuilder(Result.SUCCESS));
+      project.getPublishersList().add(notifier);
+      project.setScm(createScm());
+  
+      // first build
+      FreeStyleBuild build = assertBuildStatusSuccess(project.scheduleBuild2(0).get());
+      assertTrue(buildContainsAction(build, RundeckExecutionBuildBadgeAction.class));
+      String s = FileUtils.readFileToString(build.getLogFile());
+      assertTrue(s.contains("RunDeck execution #1 finished in 3 minutes 27 seconds, with status : SUCCEEDED"));
+    }
 
     private String createOptions() {
         Properties options = new Properties();

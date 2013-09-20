@@ -183,7 +183,7 @@ public class RundeckNotifier extends Notifier {
                   listener.getLogger().println("--------- RunDeck execution output: start ---------");
                 }
                 
-                RundeckTailResult tailResult = new RundeckTailResult(0L, "", doNotTailLogging); // if we don't tail the logging, the logging is already complete
+                RundeckTailResult tailResult = new RundeckTailResult(0L, "", Boolean.TRUE.equals(doNotTailLogging)); // if we don't tail the logging, the logging is already complete
                 while (ExecutionStatus.RUNNING.equals(execution.getStatus()) || !tailResult.isComplete()) {
                     try {
                         Thread.sleep(5000);
